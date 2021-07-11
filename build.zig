@@ -15,8 +15,13 @@ pub fn build(b: *Builder) void {
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.linkLibC();
-    exe.addIncludeDir("./libfuse/include");
-    // exe.linkSystemLibrary("fuse");
+
+    // exe.addIncludeDir("./libfuse/include");
+    exe.addLibPath("/usr/lib/x86_64-linux-gnu");
+
+    // exe.linkSystemLibraryPkgConfigOnly("fuse3") catch @panic("no libfuse3");
+    // exe.linkLibrary();
+    exe.linkSystemLibrary("fuse3");
     //exe.addSystemIncludeDir("/usr/include");
     exe.install();
 

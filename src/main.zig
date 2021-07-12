@@ -12,6 +12,7 @@ var options: struct {
 } = .{ .filename = "foobar", .contents = "xyz" };
 
 const ENOENT = 2;
+const EACCES = 13;
 
 const fuse_file_info = struct {
     //** Open flags.     Available in open() and release() */
@@ -87,21 +88,25 @@ pub fn hello_getattr(arg_path: [*c]const u8, stbuf: [*c]c.struct_stat, fi: ?*c.s
 
     const path: []const u8 = mem.span(arg_path); //@ptrCast([]const u8, path);
 
+    std.debug.print("hello_getattr {s}\n", .{path});
+
     if (mem.eql(u8, path, "/")) {
         stbuf.*.st_mode = c.S_IFDIR | 0o755;
-        // stbuf.*.st_mode = @bitCast(__mode_t, (@as(c_int, 16384) | @as(c_int, 493)));
-        stbuf.*.st_nlink = @bitCast(c.__nlink_t, @as(c_long, @as(c_int, 2)));
+        stbuf.*.st_nlink = 2;
         return 0;
     } else if (mem.eql(u8, path[1..], options.filename)) {
-        stbuf.*.st_mode = @bitCast(c.__mode_t, (@as(c_int, 32768) | @as(c_int, 292)));
-        stbuf.*.st_nlink = @bitCast(c.__nlink_t, @as(c_long, @as(c_int, 1)));
-        stbuf.*.st_size = @bitCast(c.__off_t, options.contents.len);
+        stbuf.*.st_mode = c.S_IFREG | 0o444;
+        stbuf.*.st_nlink = 1;
+        stbuf.*.st_size = @intCast(c_long, options.contents.len);
+        std.debug.print("  cts len: {d}\n", .{options.contents.len});
         return 0;
     } else return -ENOENT;
 }
 
 pub fn hello_readdir(arg_path: [*c]const u8, buf: ?*c_void, filler: c.fuse_fill_dir_t, offset: c.off_t, fi: ?*c.struct_fuse_file_info, flags: c.enum_fuse_readdir_flags) callconv(.C) c_int {
     const path = mem.span(arg_path);
+
+    std.debug.print("hello_readdir {s}\n", .{path});
     
     if(!mem.eql(u8, path, "/")) {
         return -ENOENT;
@@ -120,20 +125,23 @@ pub fn hello_readdir(arg_path: [*c]const u8, buf: ?*c_void, filler: c.fuse_fill_
 pub fn hello_open(arg_path: [*c]const u8, arg_fi: ?*c.struct_fuse_file_info) callconv(.C) c_int {
     const path = mem.span(arg_path);
 
+    std.debug.print("hello_open {s}\n", .{path});
+
     if(!mem.eql(u8, path[1..], options.filename)) {
         return -ENOENT;
     }
 
     const fi = @ptrCast(*fuse_file_info, @alignCast(@alignOf(fuse_file_info), arg_fi));
 
-    if ((fi.*.flags & @as(c_int, 3)) != @as(c_int, 0)) 
-        return -@as(c_int, 13);
+    if ((fi.*.flags & @as(c_int, c.O_ACCMODE)) != 0) 
+        return -EACCES;
     return 0;
 }
 
 pub fn hello_read(arg_path: [*c]const u8, arg_buf: [*c]u8, arg_size: usize, arg_offset: c.off_t, fi: ?*c.struct_fuse_file_info) callconv(.C) c_int {
-    
     const path = mem.span(arg_path);
+    std.debug.print("hello_read {s}\n", .{path});
+
     var size = arg_size;
 
     if(!mem.eql(u8, path[1..], options.filename)) {
@@ -141,17 +149,23 @@ pub fn hello_read(arg_path: [*c]const u8, arg_buf: [*c]u8, arg_size: usize, arg_
     }
 
     const offset = @bitCast(c_ulong, arg_offset);
+    //const buf = mem.span(arg_buf);
 
-    const buf = mem.span(arg_buf);
+    var buf = arg_buf;
+    std.debug.print("  offset: {d}\n", .{offset});
     
-    if(offset < path.len) {
-        if((offset +% size) > path.len) {
-            size = path.len -% offset;
+    if(offset < options.contents.len) {
+        if((offset +% size) > options.contents.len) {
+            size = options.contents.len -% offset;
         }
-        mem.copy(u8, buf, options.contents[offset..size]);
+        std.debug.print("  size: {d}\n", .{size});
+        @memcpy(buf, options.contents[offset..].ptr, size);
     } else {
         size = 0;
+        std.debug.print("  size: 0\n", .{});
     }
+
+    
 
     return @intCast(c_int, size); //@truncate(c_int, size);
 }

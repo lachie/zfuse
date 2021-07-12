@@ -6,7 +6,7 @@ const c = @cImport({
     @cInclude("fuse.h");
 });
 
-const options: struct {
+var options: struct {
     filename: []const u8,
     contents: []const u8,
 } = .{ .filename = "foobar", .contents = "xyz" };
@@ -75,6 +75,7 @@ const fuse_file_info = struct {
 
 
 pub fn hello_init(conn: [*c]c.struct_fuse_conn_info, cfg: [*c]c.struct_fuse_config) callconv(.C) ?*c_void {
+    std.debug.print("hello_init\n", .{});
     
     cfg.*.kernel_cache = 1;
 
@@ -208,39 +209,49 @@ pub fn show_help(arg_progname: [*c]const u8) callconv(.C) void {
 }
 
 
-pub export fn mainC(argc: c_int, argv: [*c][*c]u8) c_int {
-    var args: c.struct_fuse_args = c.struct_fuse_args{
-        .argc = argc,
-        .argv = argv,
-        .allocated = @as(c_int, 0),
-    };
-
-    // if (c.fuse_opt_parse(&args, @ptrCast(?*c_void, &options), &option_spec, null) == -@as(c_int, 1)) return 1;
-    // if (options.show_help != 0) {
-    //     c.show_help(argv[@intCast(c_uint, @as(c_int, 0))]);
-    //     _ = @sizeOf(c_int);
-    //     _ = (blk: {
-    //         break :blk if (c.fuse_opt_add_arg(&args, "--help") == @as(c_int, 0)) {} else c.__assert_fail("fuse_opt_add_arg(&args, \"--help\") == 0", "./libfuse/example/hello.c", @bitCast(c_uint, @as(c_int, 172)), "int main(int, char **)");
-    //     });
-    //     args.argv[@intCast(c_uint, @as(c_int, 0))][@intCast(c_uint, @as(c_int, 0))] = @bitCast(u8, @truncate(i8, @as(c_int, '\x00')));
-    // }
-
-   const ret = c.fuse_main_real(args.argc, args.argv, &hello_oper, @sizeOf(c.struct_fuse_operations), (@intToPtr(?*c_void, @as(c_int, 0))));
-    c.fuse_opt_free_args(&args);
-    return ret;
-}
-
-
-fn fuseMain(allocator: *std.mem.Allocator) !void {
-    
-}
+pub const option_spec2 = [1]c.struct_fuse_opt{
+    // c.struct_fuse_opt{
+    //     .templ = "-h",
+    //     .offset = @intCast(c_ulong, @ptrToInt(show_help)),
+    //     .value = @as(c_int, 1),
+    // },
+    c.struct_fuse_opt{
+        .templ = null,
+        .offset = @bitCast(c_ulong, @as(c_long, @as(c_int, 0))),
+        .value = @as(c_int, 0),
+    },
+};
 
 pub fn main() !void {
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
 
+    //std.os.argv;
+
     const args = try std.process.argsAlloc(&arena.allocator);
     defer std.process.argsFree(&arena.allocator, args);
 
-    const rv = mainC(@intCast(c_int, args.len), @ptrCast([*c][*c]u8, args));
+    std.debug.print("main {d}\n", .{args.len});
+    for (args) |a| {
+        std.debug.print("a: {s}\n", .{ a });
+    }
+
+    // var fuse_args: c.struct_fuse_args = c.struct_fuse_args{
+    //     .argc = @intCast(c_int, args.len),
+    //     .argv = @ptrCast([*c][*c]u8, args),
+    //     .allocated = @as(c_int, 0),
+    // };
+
+    // if(c.fuse_opt_parse(&fuse_args, @ptrCast(?*c_void, &options), @ptrCast([*c]const c.struct_fuse_opt, &option_spec2), null) == -1) {
+    //     return error.FuseArgsParseFailed;
+    // }
+
+    // const ret = c.fuse_main_real(fuse_args.argc, fuse_args.argv, &hello_oper, @sizeOf(c.struct_fuse_operations), null);
+
+     const ret = c.fuse_main_real(@intCast(c_int, std.os.argv.len), @ptrCast([*c][*c]u8, std.os.argv), &hello_oper, @sizeOf(c.struct_fuse_operations), null);
+
+    // const ret = c.fuse_main(args.argc, args.argv, &hello_oper, null);
+    // c.fuse_opt_free_args(&fuse_args);
+    
+    // parse ret
 }

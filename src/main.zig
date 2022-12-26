@@ -106,25 +106,13 @@ pub fn hello_getattr(arg_path: [*c]const u8, stbuf: [*c]c.struct_stat, _: ?*c.st
             .file => {
                 stbuf.*.st_mode = c.S_IFREG | 0o444;
                 stbuf.*.st_nlink = 1;
-                stbuf.*.st_size = @intCast(c_long, entry.content.len);
+                stbuf.*.st_size = @intCast(c.off_t, entry.len());
             },
         }
         return 0;
     } else {
         return -c.ENOENT;
     }
-
-    // if (mem.eql(u8, path, "/")) {
-    //     stbuf.*.st_mode = c.S_IFDIR | 0o755;
-    //     stbuf.*.st_nlink = 2;
-    //     return 0;
-    // } else if (mem.eql(u8, path[1..], options.filename)) {
-    //     stbuf.*.st_mode = c.S_IFREG | 0o444;
-    //     stbuf.*.st_nlink = 1;
-    //     stbuf.*.st_size = @intCast(c_long, options.contents.len);
-    //     log.debug("  cts len: {d}", .{options.contents.len});
-    //     return 0;
-    // } else return -ENOENT;
 }
 
 pub fn hello_readdir(arg_path: [*c]const u8, buf: ?*anyopaque, filler: c.fuse_fill_dir_t, _: c.off_t, _: ?*c.struct_fuse_file_info, _: c.enum_fuse_readdir_flags) callconv(.C) c_int {
@@ -151,32 +139,27 @@ pub fn hello_readdir(arg_path: [*c]const u8, buf: ?*anyopaque, filler: c.fuse_fi
         }
     }
     return -c.ENOENT;
-
-    // if (!mem.eql(u8, path, "/")) {
-    //     return -ENOENT;
-    // }
-
-    // // typedef int (*fuse_fill_dir_t) (void *buf, const char *name, const struct stat *stbuf, off_t off);
-
-    // const out_flags: c.fuse_fill_dir_flags = 0; // = @intToEnum(c.enum_fuse_fill_dir_flags, 0);
-
-    // _ = filler.?(buf, ".", null, 0, out_flags);
-    // _ = filler.?(buf, "..", null, 0, out_flags);
-    // _ = filler.?(buf, @ptrCast([*c]const u8, options.filename), null, 0, out_flags);
-    // return 0;
 }
 
 pub fn hello_open(arg_path: [*c]const u8, arg_fi: ?*c.struct_fuse_file_info) callconv(.C) c_int {
     const path = mem.span(arg_path);
 
-    log.debug("hello_open {s}", .{path});
+    log.debug("hello_open |{s}|", .{path});
 
-    if (db.get(path)) |_| {
+    if (db.get(path)) |entry| {
+        log.debug("   entry {s}", .{entry.path});
         const fi = @ptrCast(*fuse_file_info, @alignCast(@alignOf(fuse_file_info), arg_fi));
 
-        if ((fi.*.flags & @as(c_int, c.O_ACCMODE)) != 0)
-            return -EACCES;
-        return 0;
+        if (fi.flags & std.os.O.RDONLY == 0) {
+            return 0;
+        } else if (fi.flags & std.os.O.WRONLY == 0) {
+            return 0;
+        } else if (fi.flags & std.os.O.RDWR == 0) {
+            return 0;
+        }
+
+        // if ((fi.*.flags & @as(c_int, c.O_ACCMODE)) != 0)
+        return -EACCES;
     }
 
     return -ENOENT;
@@ -184,39 +167,45 @@ pub fn hello_open(arg_path: [*c]const u8, arg_fi: ?*c.struct_fuse_file_info) cal
 
 pub fn hello_read(arg_path: [*c]const u8, arg_buf: [*c]u8, arg_size: usize, arg_offset: c.off_t, _: ?*c.struct_fuse_file_info) callconv(.C) c_int {
     const path = mem.span(arg_path);
-    log.debug("hello_read {s}", .{path});
+    log.debug("hello_read {s} buf size: {d} at offset {d}", .{ path, arg_size, arg_offset });
 
     var size = arg_size;
 
     if (db.get(path)) |entry| {
         const offset = @bitCast(c_ulong, arg_offset);
-        //const buf = mem.span(arg_buf);
 
-        var buf = arg_buf;
-        log.debug("  offset: {d}", .{offset});
-
-        if (offset < entry.content.len) {
-            if ((offset +% size) > entry.content.len) {
-                size = entry.content.len -% offset;
-            }
-            log.debug("  size: {d}", .{size});
-            @memcpy(buf, entry.content[offset..].ptr, size);
-        } else {
-            size = 0;
-            log.debug("  size: 0\n", .{});
-        }
+        size = entry.read(arg_buf[0..arg_size], offset);
 
         return @intCast(c_int, size);
     }
     return -ENOENT;
 }
 
+pub fn hello_write(arg_path: [*c]const u8, arg_buf: [*c]const u8, arg_size: usize, arg_offset: c.off_t, _: ?*c.struct_fuse_file_info) callconv(.C) c_int {
+    const path = mem.span(arg_path);
+
+    log.debug("hello_write {s} buf size: {d} at offset {d}", .{ path, arg_size, arg_offset });
+    if (db.get(path)) |entry| {
+        const offset = @bitCast(c_ulong, arg_offset);
+
+        const size = entry.write(arg_buf[0..arg_size], offset);
+
+        return @intCast(c_int, size);
+    }
+
+    return -ENOENT;
+}
+
 pub fn hello_mknod(arg_path: [*c]const u8, mode: c.mode_t, _: c.dev_t) callconv(.C) c_int {
     const path = mem.span(arg_path);
+
+    log.debug("hello_mknod |{s}|", .{path});
 
     if ((mode & @bitCast(c.mode_t, c.S_IFMT)) != @bitCast(c.mode_t, c.S_IFREG)) return -c.EPERM;
 
     db.mknod(path) catch return -c.EPERM;
+
+    db.debug();
 
     return 0; //@intCast(c_int, 0);
 }
@@ -236,7 +225,7 @@ pub const hello_oper: c.struct_fuse_operations = c.struct_fuse_operations{
     .truncate = null,
     .open = hello_open,
     .read = hello_read,
-    .write = null,
+    .write = hello_write,
     .statfs = null,
     .flush = null,
     .release = null,

@@ -8,24 +8,49 @@ const Source = @import("./source.zig").Source;
 //     dir: Dir,
 // };
 
+pub const EntryType = enum {
+    dir,
+    file,
+};
+pub const StringEntry = struct {
+    type: EntryType,
+    path: []const u8,
+    basename: []const u8,
+    content: []u8 = "",
+
+    const Self = @This();
+
+    pub fn len(self: Self) u64 {
+        return self.content.len;
+    }
+
+    pub fn read(self: Self, buf: []u8, offset: u64) usize {
+        if (offset < self.content.len) {
+            var end = offset +% buf.len;
+            if (end > self.content.len) {
+                end = self.content.len -% offset;
+            }
+            mem.copy(u8, buf, self.content[offset..end]);
+            return end - offset;
+        } else {
+            return 0;
+        }
+    }
+    pub fn write(_: Self, _: []const u8, _: u64) usize {
+        return 0;
+    }
+};
+
 pub const Db = struct {
     allocator: std.mem.Allocator,
     map: Map,
     source: Source,
 
+    const Entry = StringEntry;
     const Map = std.hash_map.StringHashMap(Entry);
 
     const Self = @This();
-    pub const EntryType = enum {
-        dir,
-        file,
-    };
-    pub const Entry = struct {
-        type: EntryType,
-        path: []const u8,
-        basename: []const u8,
-        content: []u8 = "",
-    };
+    const log = std.log.scoped(.db);
 
     pub fn init(allocator: std.mem.Allocator, source: Source) !Self {
         const map = Map.init(allocator);
@@ -35,6 +60,15 @@ pub const Db = struct {
     pub fn deinit(self: *Self) void {
         self.map.deinit();
         self.source.deinit();
+    }
+
+    pub fn debug(self: *Self) void {
+        var iter = self.map.iterator();
+        while (iter.next()) |e| {
+            const entry = e.value_ptr;
+            log.debug("e {s}", .{entry.path});
+            log.debug("  {d} {s}", .{ entry.len(), entry.content[0..] });
+        }
     }
 
     const RootEntry = Entry{
@@ -54,14 +88,14 @@ pub const Db = struct {
         parent: *const Entry,
         valueIterator: Map.ValueIterator,
 
-        const log = std.log.scoped(.PrefixIterator);
+        const plog = std.log.scoped(.PrefixIterator);
 
         pub fn next(self: *@This()) ?*Entry {
-            log.debug("next {s}", .{self.parent.path});
+            plog.debug("next {s}", .{self.parent.path});
             while (self.valueIterator.next()) |e| {
-                log.debug("   entry {s}", .{e.path});
+                plog.debug("   entry {s}", .{e.path});
                 if (self.parent.path.len < e.path.len) {
-                    log.debug("   chk hay {s} ndl {s}", .{ e.path, self.parent.path });
+                    plog.debug("   chk hay {s} ndl {s}", .{ e.path, self.parent.path });
                     if (mem.startsWith(u8, e.path, self.parent.path)) {
                         return e;
                     }
@@ -75,12 +109,13 @@ pub const Db = struct {
         return PrefixIterator{ .valueIterator = self.map.valueIterator(), .parent = parent };
     }
 
-    pub fn putString(self: *Self, path: []const u8, content: []const u8) !void {
-        var cnt = try self.allocator.dupe(u8, content);
-        return try self.map.put(path, .{ .path = path, .basename = std.fs.path.basename(path), .type = .file, .content = cnt });
+    pub fn putString(self: *Self, inPath: []const u8, inContent: []const u8) !void {
+        const path = try self.allocator.dupe(u8, inPath);
+        var content = try self.allocator.dupe(u8, inContent);
+        return try self.map.put(path, .{ .path = path, .basename = std.fs.path.basename(path), .type = .file, .content = content });
     }
     pub fn mknod(self: *Self, path: []const u8) !void {
-        return try self.map.put(path, .{ .path = path, .basename = std.fs.path.basename(path), .type = .file });
+        return self.putString(path, "");
     }
 };
 

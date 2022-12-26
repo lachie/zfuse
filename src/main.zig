@@ -115,27 +115,38 @@ pub fn hello_getattr(arg_path: [*c]const u8, stbuf: [*c]c.struct_stat, _: ?*c.st
     }
 }
 
-pub fn hello_readdir(arg_path: [*c]const u8, buf: ?*anyopaque, filler: c.fuse_fill_dir_t, _: c.off_t, _: ?*c.struct_fuse_file_info, _: c.enum_fuse_readdir_flags) callconv(.C) c_int {
-    const path = mem.span(arg_path);
+pub fn hello_readdir(arg_path: [*c]const u8, buf: ?*anyopaque, maybe_filler: c.fuse_fill_dir_t, _: c.off_t, _: ?*c.struct_fuse_file_info, _: c.enum_fuse_readdir_flags) callconv(.C) c_int {
+    if (maybe_filler) |filler| {
+        const path = mem.span(arg_path);
 
-    log.debug("hello_readdir {s}", .{path});
+        log.debug("hello_readdir {s}", .{path});
 
-    if (db.get(path)) |entry| {
-        switch (entry.type) {
-            .dir => {
-                var out_flags: c.fuse_fill_dir_flags = 0;
-                _ = filler.?(buf, ".", null, 0, out_flags);
-                _ = filler.?(buf, "..", null, 0, out_flags);
+        if (db.get(path)) |entry| {
+            switch (entry.type) {
+                .dir => {
+                    var out_flags: c.fuse_fill_dir_flags = 0;
+                    _ = filler(buf, ".", null, 0, out_flags);
+                    _ = filler(buf, "..", null, 0, out_flags);
 
-                var children = db.getChildren(entry);
-                while (children.next()) |child| {
-                    out_flags = 0;
-                    log.debug("    readdir {s}", .{child.basename});
-                    _ = filler.?(buf, @ptrCast([*c]const u8, child.basename), null, 0, out_flags);
-                }
-                return 0;
-            },
-            else => {},
+                    var children = db.getChildren(entry);
+                    while (children.next()) |child| {
+                        // var basename_scratch = std.BoundedArray(u8, 256).init(child.basename.len + 1) catch return -c.EIO;
+
+                        out_flags = 0;
+                        log.debug("    readdir {s}", .{child.basename});
+
+                        // std.mem.copy(u8, basename_scratch.slice(), child.basename);
+                        // basename_scratch.set(child.basename.len, 0);
+
+                        // const cstr = @ptrCast([*c]const u8, child.basename);
+                        // const cstr: [*c]const u8 = basename_scratch.constSlice();
+
+                        _ = filler(buf, child.basename.ptr, null, 0, out_flags);
+                    }
+                    return 0;
+                },
+                else => {},
+            }
         }
     }
     return -c.ENOENT;
@@ -185,15 +196,15 @@ pub fn hello_write(arg_path: [*c]const u8, arg_buf: [*c]const u8, arg_size: usiz
     const path = mem.span(arg_path);
 
     log.debug("hello_write {s} buf size: {d} at offset {d}", .{ path, arg_size, arg_offset });
-    if (db.get(path)) |entry| {
+    if (db.getMut(path)) |entry| {
         const offset = @bitCast(c_ulong, arg_offset);
 
-        const size = entry.write(arg_buf[0..arg_size], offset);
+        const size = entry.write(arg_buf[0..arg_size], offset) catch return -c.EIO;
 
         return @intCast(c_int, size);
     }
 
-    return -ENOENT;
+    return -c.ENOENT;
 }
 
 pub fn hello_mknod(arg_path: [*c]const u8, mode: c.mode_t, _: c.dev_t) callconv(.C) c_int {
@@ -207,7 +218,24 @@ pub fn hello_mknod(arg_path: [*c]const u8, mode: c.mode_t, _: c.dev_t) callconv(
 
     db.debug();
 
-    return 0; //@intCast(c_int, 0);
+    return 0;
+}
+
+pub fn hello_unlink(path: [*c]const u8) callconv(.C) c_int {
+    if (db.del(mem.span(path))) {
+        return 0;
+    }
+    return -c.ENOENT;
+}
+
+pub fn hello_utimens(arg_path: [*c]const u8, arg_times: [*c]const c.struct_timespec, _: ?*c.struct_fuse_file_info) callconv(.C) c_int {
+    const path = mem.span(arg_path);
+    log.debug("hello_utimens |{s}| {any}", .{ path, arg_times });
+    if (db.getMut(path)) |_| {
+        // TODO update times
+        return 0;
+    }
+    return -c.ENOENT;
 }
 
 pub const hello_oper: c.struct_fuse_operations = c.struct_fuse_operations{
@@ -215,7 +243,7 @@ pub const hello_oper: c.struct_fuse_operations = c.struct_fuse_operations{
     .readlink = null,
     .mknod = hello_mknod,
     .mkdir = null,
-    .unlink = null,
+    .unlink = hello_unlink,
     .rmdir = null,
     .symlink = null,
     .rename = null,
@@ -243,7 +271,7 @@ pub const hello_oper: c.struct_fuse_operations = c.struct_fuse_operations{
     .access = null,
     .create = null,
     .lock = null,
-    .utimens = null,
+    .utimens = hello_utimens,
     .bmap = null,
     .ioctl = null,
     .poll = null,

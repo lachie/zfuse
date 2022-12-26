@@ -8,17 +8,39 @@ const Source = @import("./source.zig").Source;
 //     dir: Dir,
 // };
 
+var null_allocator = std.heap.FixedBufferAllocator.init("");
+
 pub const EntryType = enum {
     dir,
     file,
 };
 pub const StringEntry = struct {
+    allocator: mem.Allocator = undefined,
     type: EntryType,
     path: []const u8,
-    basename: []const u8,
+    basename: [:0]const u8,
     content: []u8 = "",
 
     const Self = @This();
+
+    pub fn initWithString(allocator: mem.Allocator, inPath: []const u8, inContent: []const u8) !Self {
+        const path = try allocator.dupe(u8, inPath);
+
+        // basenameZ setup
+        // alloc separate memory of the basename with a sentinel to ease working with the FUSE functions.
+        const basename = std.fs.path.basename(path);
+        const basenameZ = try allocator.dupeZ(u8, basename);
+
+        var content = try allocator.dupe(u8, inContent);
+
+        return .{ .allocator = allocator, .path = path, .basename = basenameZ, .type = .file, .content = content };
+    }
+
+    pub fn deinit(self: *Self) void {
+        self.allocator.destroy(&self.path);
+        self.allocator.destroy(&self.basename);
+        self.allocator.destroy(&self.content);
+    }
 
     pub fn len(self: Self) u64 {
         return self.content.len;
@@ -36,8 +58,15 @@ pub const StringEntry = struct {
             return 0;
         }
     }
-    pub fn write(_: Self, _: []const u8, _: u64) usize {
-        return 0;
+
+    pub fn write(self: *Self, buf: []const u8, offset: u64) !usize {
+        const newLen = buf.len + offset;
+        const usOffset = @intCast(usize, offset);
+        if (newLen > self.content.len) {
+            self.content = try self.allocator.realloc(self.content, newLen);
+        }
+        mem.copy(u8, self.content[usOffset..], buf);
+        return buf.len;
     }
 };
 
@@ -58,6 +87,10 @@ pub const Db = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        var iter = self.map.valueIterator();
+        while (iter.next()) |e| {
+            e.deinit();
+        }
         self.map.deinit();
         self.source.deinit();
     }
@@ -75,6 +108,7 @@ pub const Db = struct {
         .path = "/",
         .basename = "",
         .type = .dir,
+        .allocator = null_allocator.allocator(),
     };
 
     pub fn get(self: Self, path: []const u8) ?*const Entry {
@@ -82,6 +116,24 @@ pub const Db = struct {
             return &RootEntry;
         }
         return self.map.getPtr(path);
+    }
+    pub fn getMut(self: Self, path: []const u8) ?*Entry {
+        if (mem.eql(u8, "/", path)) {
+            return null;
+        }
+        return self.map.getPtr(path);
+    }
+
+    pub fn del(self: *Self, path: []const u8) bool {
+        if (mem.eql(u8, "/", path)) {
+            return false;
+        }
+        if (self.map.fetchRemove(path)) |*map_entry| {
+            var entry = map_entry.value;
+            entry.deinit();
+            return true;
+        }
+        return false;
     }
 
     const PrefixIterator = struct {
@@ -91,11 +143,8 @@ pub const Db = struct {
         const plog = std.log.scoped(.PrefixIterator);
 
         pub fn next(self: *@This()) ?*Entry {
-            plog.debug("next {s}", .{self.parent.path});
             while (self.valueIterator.next()) |e| {
-                plog.debug("   entry {s}", .{e.path});
                 if (self.parent.path.len < e.path.len) {
-                    plog.debug("   chk hay {s} ndl {s}", .{ e.path, self.parent.path });
                     if (mem.startsWith(u8, e.path, self.parent.path)) {
                         return e;
                     }
@@ -109,10 +158,13 @@ pub const Db = struct {
         return PrefixIterator{ .valueIterator = self.map.valueIterator(), .parent = parent };
     }
 
-    pub fn putString(self: *Self, inPath: []const u8, inContent: []const u8) !void {
-        const path = try self.allocator.dupe(u8, inPath);
-        var content = try self.allocator.dupe(u8, inContent);
-        return try self.map.put(path, .{ .path = path, .basename = std.fs.path.basename(path), .type = .file, .content = content });
+    pub fn putString(self: *Self, path: []const u8, content: []const u8) !void {
+        const entry = try Entry.initWithString(self.allocator, path, content);
+        return try self.map.put(entry.path, entry);
+
+        // const path = try self.allocator.dupe(u8, inPath);
+        // var content = try self.allocator.dupe(u8, inContent);
+        // return try self.map.put(path, .{ .path = path, .basename = std.fs.path.basename(path), .type = .file, .content = content });
     }
     pub fn mknod(self: *Self, path: []const u8) !void {
         return self.putString(path, "");

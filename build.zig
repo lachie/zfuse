@@ -17,11 +17,11 @@ pub fn build(b: *Builder) void {
     exe.linkLibC();
 
     // exe.addIncludeDir("./libfuse/include");
-    exe.addLibPath("/usr/lib/x86_64-linux-gnu");
+    // exe.addLibraryPath("/usr/lib/x86_64-linux-gnu");
     // exe.addLibPath("libfuse/build/lib");
 
     exe.linkSystemLibrary("fuse3");
-    //exe.addSystemIncludeDir("/usr/include");
+    // exe.addSystemIncludePath("/usr/include");
     exe.install();
 
     const run_cmd = exe.run();

@@ -11,7 +11,7 @@ pub fn build(b: *Builder) void {
     // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall.
     const mode = b.standardReleaseOptions();
 
-    const exe = b.addExecutable("hellofuse", "src/main.zig");
+    const exe = b.addExecutable("hellofuse", "src/mainro.zig");
     exe.setTarget(target);
     exe.setBuildMode(mode);
     exe.linkLibC();

@@ -16,6 +16,9 @@ pub fn build(b: *Builder) void {
     exe.setBuildMode(mode);
     exe.linkLibC();
 
+    exe.addCSourceFile("fuse-workaround/fuse_interop.c", &[_][]const u8{});
+    exe.addIncludePath("fuse-workaround");
+
     // exe.addIncludeDir("./libfuse/include");
     // exe.addLibraryPath("/usr/lib/x86_64-linux-gnu");
     // exe.addLibPath("libfuse/build/lib");

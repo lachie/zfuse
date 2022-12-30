@@ -63,6 +63,7 @@ pub const MetaDb = struct {
     }
 
     pub fn deinit(self: *Self) void {
+        std.log.warn("meta db deinit", .{});
         self.dbs.deinit();
         for (self.dbEntries.values()) |entry| {
             self.dbEntries.allocator.free(entry.basename);
@@ -71,15 +72,27 @@ pub const MetaDb = struct {
     }
 
     pub fn mount(self: *Self, name: []const u8, db: Db) !void {
-        try self.dbs.put(name, db);
+        const basename = try self.dbEntries.allocator.dupeZ(u8, name);
+        try self.dbs.put(basename, db);
 
-        const entry = Entry{ .basename = try self.dbEntries.allocator.dupeZ(u8, name) };
+        const entry = Entry{ .basename = basename, .kind = .dir };
         try self.dbEntries.put(name, entry);
     }
 
-    fn get(ptr: *anyopaque, path: []const u8) ?*const Entry {
+    pub fn mounted(self: Self, name: []const u8) ?Db {
+        return self.dbs.get(name);
+    }
+
+    fn get(ptr: *anyopaque, path: []const u8) ?Entry {
         const hr = splitPath(path);
-        std.log.warn("meta db get {any}", .{hr});
+        std.log.warn("metaDb get {any}", .{hr});
+
+        if (hr.root) {
+            return Entry{
+                .basename = "",
+                .kind = .dir,
+            };
+        }
 
         if (dbCtx(ptr, path)) |ctx| {
             std.log.warn("   |{s}| sub-path |{s}|", .{ hr.head, ctx.path });
@@ -93,7 +106,7 @@ pub const MetaDb = struct {
 
         const self = @ptrCast(*Self, @alignCast(@alignOf(Self), ptr));
         std.log.warn("   getting dbe {s}", .{hr.head});
-        if (self.dbEntries.getPtr(hr.head)) |entry| {
+        if (self.dbEntries.get(hr.head)) |entry| {
             std.log.warn("   entry: {*} {s}", .{ entry.basename, entry.basename });
             return entry;
         }
@@ -120,7 +133,7 @@ pub const MetaDb = struct {
         // return null;
     }
 
-    fn getAt(ptr: *anyopaque, path: []const u8, at: usize) ?*const Entry {
+    fn getAt(ptr: *anyopaque, path: []const u8, at: usize) ?Entry {
         const self = @ptrCast(*Self, @alignCast(@alignOf(Self), ptr));
         const hr = splitPath(path);
         std.log.warn("getat {any} {d}", .{ hr, at });
@@ -128,7 +141,7 @@ pub const MetaDb = struct {
         if (hr.root) {
             const values = self.dbEntries.values();
             if (at < values.len) {
-                return &values[at];
+                return values[at];
             }
             return null;
         }
@@ -165,6 +178,10 @@ pub const MetaDb = struct {
         const self = @ptrCast(*Self, @alignCast(@alignOf(Self), ptr));
         const hr = splitPath(path);
 
+        // if (hr.root) {
+        //     return Db.DbContext{ .db = self.idb(), .path = path };
+        // }
+
         // if (hr.head.len > 0) {
         if (self.dbs.get(hr.head)) |db| {
             return db.dbCtx(hr.rest);
@@ -192,7 +209,7 @@ const TestDb = struct {
         };
     }
 
-    fn get(ptr: *anyopaque, path: []const u8) ?*const Entry {
+    fn get(ptr: *anyopaque, path: []const u8) ?Entry {
         const hr = splitPath(path);
         std.log.warn("test db get {any}", .{hr});
 
@@ -201,13 +218,13 @@ const TestDb = struct {
         }
         const self = @ptrCast(*Self, @alignCast(@alignOf(Self), ptr));
         const basename = std.fmt.allocPrintZ(self.allocator, "p:{s}", .{hr.head}) catch return null;
-        return &.{ .basename = basename };
+        return .{ .basename = basename };
     }
 
-    fn getAt(ptr: *anyopaque, path: []const u8, at: usize) ?*const Entry {
+    fn getAt(ptr: *anyopaque, path: []const u8, at: usize) ?Entry {
         const self = @ptrCast(*Self, @alignCast(@alignOf(Self), ptr));
         const basename = std.fmt.allocPrintZ(self.allocator, "p:{s}:{d}", .{ path, at }) catch return null;
-        return &.{ .basename = basename };
+        return .{ .basename = basename };
     }
 
     // fn dbCtx(ptr: *anyopaque, path: []const u8) ?Db.DbContext {
